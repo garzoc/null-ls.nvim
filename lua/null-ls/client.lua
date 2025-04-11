@@ -33,13 +33,26 @@ end
 local on_init = function(new_client, initialize_result)
     local capability_is_disabled = function(method)
         -- TODO: extract map to prevent future issues
-        local required_capability = protocol._request_name_to_capability[method]
+        local required_capability
+        if lsp._request_name_to_capability then
+            required_capability = lsp._request_name_to_capability[method]
+        else
+            -- Neovim 0.11
+            required_capability = protocol._request_name_to_capability[method]
+        end
         return not required_capability
             or vim.tbl_get(new_client.server_capabilities, unpack(required_capability)) == false
     end
 
     -- null-ls broadcasts all capabilities on launch, so this lets us have finer control
-    new_client.supports_method = function(method)
+    function new_client:supports_method(method)
+
+        -- Address backwards breaking changes to the lsp code in neovim 0.11
+        if self ~= new_client then
+            method = self
+            self = new_client
+        end
+
         -- allow users to specifically disable capabilities
         if capability_is_disabled(method) then
             return false
@@ -96,7 +109,11 @@ M.start_client = function(fname)
     }
 
     log:trace("starting null-ls client")
-    id = lsp.start_client(config)
+    if lsp.start then
+        id = lsp.start(config)
+    else
+        id = lsp.start_client(config)
+    end
 
     if not id then
         log:error(string.format("failed to start null-ls client with config: %s", vim.inspect(config)))
