@@ -1,6 +1,10 @@
 -- adapted from Neovim's previous vim.lsp.util.compute_diff implementation
 local M = {}
 
+--- @param old_lines table<integer, string>
+--- @param new_lines table<integer, string>
+---
+--- @return integer, integer>
 local function first_difference(old_lines, new_lines)
     local line_count = math.min(#old_lines, #new_lines)
     if line_count == 0 then
@@ -30,6 +34,11 @@ local function first_difference(old_lines, new_lines)
     return start_line_idx, start_col_idx
 end
 
+--- @param old_lines table<integer, string>
+--- @param new_lines table<integer, string>
+--- @param start_char integer
+---
+--- @return integer, integer>
 local function last_difference(old_lines, new_lines, start_char)
     local line_count = math.min(#old_lines, #new_lines)
     if line_count == 0 then
@@ -71,6 +80,15 @@ local function last_difference(old_lines, new_lines, start_char)
     return end_line_idx, end_col_idx
 end
 
+-- Extract a chunk of text that is recorded line by line in a table
+--- @param lines table<integer, string>
+--- @param start_line integer
+--- @param start_char integer
+--- @param end_line integer
+--- @param end_char integer
+--- @param line_ending string
+---
+--- @return string
 local function extract_text(lines, start_line, start_char, end_line, end_char, line_ending)
     if start_line == #lines + end_line + 1 then
         if end_line == 0 then
@@ -96,6 +114,13 @@ local function extract_text(lines, start_line, start_char, end_line, end_char, l
     return result
 end
 
+--- @param lines table<integer, string>
+--- @param start_line integer
+--- @param start_char integer
+--- @param end_line integer
+--- @param end_char integer
+---
+--- @return integer
 local function compute_length(lines, start_line, start_char, end_line, end_char)
     local adj_end_line = #lines + end_line + 1
 
@@ -119,6 +144,20 @@ local function compute_length(lines, start_line, start_char, end_line, end_char)
     return result
 end
 
+--- @class nulls.diff.compute.result.range.line
+--- @field line integer
+--- @field character integer
+--- @class nulls.diff.compute.result.range
+--- @field start nulls.diff.compute.result.range.line
+--- @field end nulls.diff.compute.result.range.line
+--- @class nulls.diff.compute.result
+--- @field newText string
+--- @field range nulls.diff.compute.result.range
+--- @field rangeLength integer
+--- @param old_lines table<integer, string>
+--- @param new_lines table<integer, string>
+--- @param line_ending? string
+--- @return nulls.diff.compute.result
 function M.compute_diff(old_lines, new_lines, line_ending)
     line_ending = line_ending or "\n"
 
@@ -131,6 +170,8 @@ function M.compute_diff(old_lines, new_lines, line_ending)
     local text = extract_text(new_lines, start_line, start_char, end_line, end_char, line_ending)
     local length = compute_length(old_lines, start_line, start_char, end_line, end_char)
 
+    -- TODO: Check if we can't just use #text instead of compute_length
+
     local adj_end_line = #old_lines + end_line
     local adj_end_char
     if end_line == 0 then
@@ -139,11 +180,12 @@ function M.compute_diff(old_lines, new_lines, line_ending)
         adj_end_char = #old_lines[#old_lines + end_line + 1] + end_char + 1
     end
 
-    local _, adjusted_start_char = vim.str_utfindex(old_lines[start_line], start_char - 1)
-    local _, adjusted_end_char = vim.str_utfindex(old_lines[#old_lines + end_line + 1], adj_end_char)
+    local adjusted_start_char = vim.str_utfindex(old_lines[start_line], "utf-8", start_char - 1)
+    local adjusted_end_char = vim.str_utfindex(old_lines[#old_lines + end_line + 1], "utf-8", adj_end_char)
     start_char = adjusted_start_char
     end_char = adjusted_end_char
 
+    -- TODO investigate where the result is used and if it can be cleaned up.
     local result = {
         range = {
             start = { line = start_line - 1, character = start_char },
