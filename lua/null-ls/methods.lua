@@ -1,3 +1,27 @@
+--function tbl_add_reverse_lookup(tbl)
+--    for key, value in pairs(tbl) do
+--        tbl[value] = key
+--    end
+--end
+
+function tbl_add_reverse_lookup(o)
+    local keys = vim.tbl_keys(o)
+    for _, k in ipairs(keys) do
+        local v = o[k]
+        if o[v] then
+        error(
+            string.format(
+            'The reverse lookup found an existing value for %q while processing key %q',
+            tostring(v),
+            tostring(k)
+            )
+        )
+        end
+        o[v] = k
+    end
+    return o
+end
+
 local lsp_methods = {
     INITIALIZE = "initialize",
     SHUTDOWN = "shutdown",
@@ -14,7 +38,7 @@ local lsp_methods = {
     HOVER = "textDocument/hover",
     COMPLETION = "textDocument/completion",
 }
-vim.tbl_add_reverse_lookup(lsp_methods)
+tbl_add_reverse_lookup(lsp_methods)
 
 local internal_methods = {
     CODE_ACTION = "NULL_LS_CODE_ACTION",
@@ -26,7 +50,7 @@ local internal_methods = {
     HOVER = "NULL_LS_HOVER",
     COMPLETION = "NULL_LS_COMPLETION",
 }
-vim.tbl_add_reverse_lookup(internal_methods)
+tbl_add_reverse_lookup(internal_methods)
 
 local lsp_to_internal_map = {
     [lsp_methods.CODE_ACTION] = internal_methods.CODE_ACTION,
