@@ -23,6 +23,7 @@ local function make_builtin(opts)
         filetypes = u.table.uniq(vim.list_extend(filetypes, extra_filetypes))
     end
 
+    -- TODO: How does from std_err and to_stdin work?
     -- merge valid user opts w/ generator opts
     generator_opts = vim.tbl_deep_extend("force", generator_opts, {
         args = opts.args,
@@ -36,6 +37,7 @@ local function make_builtin(opts)
         diagnostics_postprocess = opts.diagnostics_postprocess,
         dynamic_command = opts.dynamic_command,
         ignore_stderr = opts.ignore_stderr,
+        print_stderr = opts.print_stderr,
         runtime_condition = opts.runtime_condition,
         timeout = opts.timeout,
         to_temp_file = opts.to_temp_file,

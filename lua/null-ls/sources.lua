@@ -99,6 +99,7 @@ local register_source = function(source)
 end
 
 M.is_available = function(source, filetype, method)
+    -- TODO: not sure I am a big fan of disabling the lsp on any failure.
     if source._disabled or source.generator._failed then
         return false
     end
