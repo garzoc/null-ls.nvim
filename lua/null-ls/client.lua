@@ -36,9 +36,12 @@ local on_init = function(new_client, initialize_result)
         local required_capability
         if lsp._request_name_to_capability then
             required_capability = lsp._request_name_to_capability[method]
-        else
+        elseif protocol["request_name_to_capability"] then
             -- Neovim 0.11
             required_capability = protocol._request_name_to_capability[method]
+        else
+            -- Neovim 0.12
+            required_capability = protocol._request_name_to_server_capability[method]
         end
         return not required_capability
             or vim.tbl_get(new_client.server_capabilities, unpack(required_capability)) == false
