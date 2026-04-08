@@ -37,12 +37,22 @@ M.setup = function(user_config)
     end, {})
 
     local augroup = vim.api.nvim_create_augroup("NullLs", {})
-    vim.api.nvim_create_autocmd("FileType", {
-        group = augroup,
-        callback = function()
-            require("null-ls.client").try_add()
-        end,
-    })
+    if (M.has_version("0.12")) then
+        -- Looks like 0.12 might have messed up the autocommand load order
+        vim.api.nvim_create_autocmd("BufRead", {
+            group = augroup,
+            callback = function()
+                require("null-ls.client").try_add()
+            end,
+        })
+    else
+        vim.api.nvim_create_autocmd("FileType", {
+            group = augroup,
+            callback = function()
+                require("null-ls.client").try_add()
+            end,
+        })
+    end
     vim.api.nvim_create_autocmd("InsertLeave", {
         group = augroup,
         callback = function()
