@@ -1,6 +1,7 @@
 local c = require("null-ls.config")
 local helpers = require("null-ls.helpers")
 local sources = require("null-ls.sources")
+local utils = require("null-ls.utils")
 
 local M = {}
 
@@ -37,7 +38,7 @@ M.setup = function(user_config)
     end, {})
 
     local augroup = vim.api.nvim_create_augroup("NullLs", {})
-    if (M.has_version("0.12")) then
+    if (utils.has_version("0.12")) then
         -- Looks like 0.12 might have messed up the autocommand load order
         vim.api.nvim_create_autocmd("BufRead", {
             group = augroup,
