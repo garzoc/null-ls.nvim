@@ -7,7 +7,9 @@ local default_notify_opts = {
 
 local log = {}
 
---- Adds a log entry using Plenary.log
+local level_order = { trace = 0, debug = 1, info = 2, warn = 3, error = 4 }
+
+--- Adds a log entry to the logfile
 ---@param msg any
 ---@param level string [same as vim.log.log_levels]
 function log:add_entry(msg, level)
@@ -19,33 +21,26 @@ function log:add_entry(msg, level)
         end
     end
 
-    if cfg.log_level == "off" then
+    local min_level = cfg.log_level or "warn"
+    if min_level == "off" then
         return
     end
-
-    if self.__handle then
-        self.__handle[level](msg)
-        return
-    end
-
-    local default_opts = {
-        plugin = "null-ls",
-        level = cfg.log_level or "warn",
-        use_console = false,
-        info_level = 4,
-    }
     if cfg.debug then
-        default_opts.level = "trace"
+        min_level = "trace"
     end
 
-    local has_plenary, plenary_log = pcall(require, "plenary.log")
-    if not has_plenary then
+    if (level_order[level] or 0) < (level_order[min_level] or 0) then
         return
     end
 
-    local handle = plenary_log.new(default_opts)
-    handle[level](msg)
-    self.__handle = handle
+    local logpath = self:get_path()
+    local fp = io.open(logpath, "a")
+    if not fp then
+        return
+    end
+    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    fp:write(string.format("[%-5s %s] %s\n", level:upper(), timestamp, tostring(msg)))
+    fp:close()
 end
 
 ---Retrieves the path of the logfile

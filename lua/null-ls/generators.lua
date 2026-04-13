@@ -6,9 +6,28 @@ local M = {}
 
 local progress_token = 0
 
-M.run = function(generators, params, opts, callback)
-    local a = require("plenary.async")
+--- Resume a coroutine on the next event loop tick via vim.schedule.
+local function schedule_resume(co)
+    vim.schedule(function()
+        coroutine.resume(co)
+    end)
+end
 
+--- Run an async generator function (params, callback) synchronously inside a coroutine.
+--- Yields the coroutine until the callback fires, then returns (ok, results).
+local function call_async(fn, params)
+    local co = coroutine.running()
+    local ok, results
+    fn(params, function(res)
+        ok, results = true, res
+        -- resume on the event loop so we're back on the main thread
+        schedule_resume(co)
+    end)
+    coroutine.yield()
+    return ok, results
+end
+
+M.run = function(generators, params, opts, callback)
     local all_results = {}
     local safe_callback = function()
         if not callback then
@@ -34,85 +53,89 @@ M.run = function(generators, params, opts, callback)
         current_progress_token = progress_token
     end
 
-    local futures = {}
     local copy_params = function(to_copy)
         if #generators < 2 then
             return to_copy
         end
-
         return vim.deepcopy(to_copy)
     end
 
-    for i, generator in ipairs(generators) do
-        table.insert(futures, function()
-            local copied_params = copy_params(opts.make_params and opts.make_params() or params)
-            -- pass to enable params:get_source()
-            copied_params.source_id = generator.source_id
+    -- Build a task function for each generator. When generator.async is true the
+    -- function must run inside a coroutine so it can yield while waiting for the
+    -- callback.
+    local run_generator = function(i, generator)
+        local copied_params = copy_params(opts.make_params and opts.make_params() or params)
+        copied_params.source_id = generator.source_id
 
-            local runtime_condition = generator.opts and generator.opts.runtime_condition
-            if runtime_condition and not runtime_condition(copied_params) then
-                return
+        local runtime_condition = generator.opts and generator.opts.runtime_condition
+        if runtime_condition and not runtime_condition(copied_params) then
+            return
+        end
+
+        if current_progress_token then
+            client.send_progress_notification(current_progress_token, {
+                kind = "report",
+                message = generator.opts and generator.opts.name,
+                percentage = math.floor((i - 1) / #generators * 100),
+            })
+        end
+
+        local ok, results
+        if generator.async then
+            ok, results = call_async(generator.fn, copied_params)
+        else
+            ok, results = pcall(generator.fn, copied_params)
+        end
+
+        -- yield to the event loop (replaces a.util.scheduler + coroutine.yield)
+        local co = coroutine.running()
+        if co then
+            schedule_resume(co)
+            coroutine.yield()
+        end
+
+        -- filter results with the filter option
+        local filter = generator.opts and generator.opts.filter
+        if filter and results then
+            results = vim.tbl_filter(filter, results)
+        end
+
+        if results then
+            if results._generator_err then
+                ok = false
+                results = results._generator_err
             end
 
-            if current_progress_token then
-                client.send_progress_notification(current_progress_token, {
-                    kind = "report",
-                    message = generator.opts and generator.opts.name,
-                    percentage = math.floor((i - 1) / #generators * 100),
-                })
+            if results._should_deregister and generator.source_id then
+                results = nil
+                vim.schedule(function()
+                    require("null-ls.sources").deregister({ id = generator.source_id })
+                end)
             end
+        end
 
-            local to_run = generator.async and a.wrap(generator.fn, 2) or generator.fn
-            local protected_call = generator.async and a.util.apcall or pcall
-            local ok, results = protected_call(to_run, copied_params)
-            a.util.scheduler()
+        if not ok then
+            log:warn("failed to run generator: " .. results)
+            generator._failed = true
+            return
+        end
 
-            -- filter results with the filter option
-            local filter = generator.opts and generator.opts.filter
-            if filter and results then
-                results = vim.tbl_filter(filter, results)
+        results = results or {}
+        local postprocess, after_each = opts.postprocess, opts.after_each
+        for _, result in ipairs(results) do
+            if postprocess then
+                postprocess(result, copied_params, generator)
             end
+            table.insert(all_results, result)
+        end
 
-            if results then
-                -- allow generators to pass errors without throwing them (e.g. in luv callbacks)
-                if results._generator_err then
-                    ok = false
-                    results = results._generator_err
-                end
-
-                -- allow generators to deregister their parent sources
-                if results._should_deregister and generator.source_id then
-                    results = nil
-                    vim.schedule(function()
-                        require("null-ls.sources").deregister({ id = generator.source_id })
-                    end)
-                end
-            end
-
-            -- TODO: pass generator error trace
-            if not ok then
-                log:warn("failed to run generator: " .. results)
-                generator._failed = true
-                return
-            end
-
-            results = results or {}
-            local postprocess, after_each = opts.postprocess, opts.after_each
-            for _, result in ipairs(results) do
-                if postprocess then
-                    postprocess(result, copied_params, generator)
-                end
-
-                table.insert(all_results, result)
-            end
-
-            if after_each then
-                after_each(results, copied_params, generator)
-            end
-        end)
+        if after_each then
+            after_each(results, copied_params, generator)
+        end
     end
 
-    a.run(function()
+    -- Main coroutine that orchestrates all generators.
+    local main = coroutine.create(function()
         if current_progress_token then
             client.send_progress_notification(current_progress_token, {
                 kind = "begin",
@@ -122,13 +145,31 @@ M.run = function(generators, params, opts, callback)
         end
 
         if opts.sequential then
-            for _, future in ipairs(futures) do
-                future()
+            for i, generator in ipairs(generators) do
+                run_generator(i, generator)
             end
         else
-            a.util.join(futures)
+            -- Run all generators concurrently: each in its own coroutine.
+            -- Track completion with a counter and resume main when all done.
+            local remaining = #generators
+            local main_co = coroutine.running()
+
+            for i, generator in ipairs(generators) do
+                local co = coroutine.create(function()
+                    run_generator(i, generator)
+                    remaining = remaining - 1
+                    if remaining == 0 then
+                        schedule_resume(main_co)
+                    end
+                end)
+                coroutine.resume(co)
+            end
+
+            if remaining > 0 then
+                coroutine.yield()
+            end
         end
-    end, function()
+
         if current_progress_token then
             client.send_progress_notification(current_progress_token, {
                 kind = "end",
@@ -137,6 +178,8 @@ M.run = function(generators, params, opts, callback)
         end
         safe_callback()
     end)
+
+    coroutine.resume(main)
 end
 
 M.run_sequentially = function(generators, make_params, opts, callback)
